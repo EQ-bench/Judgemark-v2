@@ -5,7 +5,7 @@ import scipy.stats
 import logging
 from typing import Dict, List
 import re
-from config.constants import REFERENCE_MODEL_SCORES
+from config.constants import REFERENCE_MODEL_SCORES, NEGATIVE_MARKERS
 from utils.stats import normalize
 
 import re
@@ -67,25 +67,14 @@ def compute_raw_score(scores: Dict[str, float], scoring_min: float = 0, scoring_
     """
     valid_scores = {k: v for k, v in scores.items() if scoring_min <= v <= scoring_max}
     
-    if len(valid_scores) < 10:
+    if len(valid_scores) < 5:
         return None
-    
-    negative_markers = [
-        "melodramatic", "shallow resolution", "unearned resolution",
-        "simplistic moralizing", "shallow optimism", "forced optimism", 
-        "trite", "overwrought", "amateurish", "contrived", "uninspiring",
-        "characters are too good", "incongruent ending positivity",
-        "unearned transformations", "profundity over-reach",
-        "amateurish descriptives", "clunky asides", "stilted dialogue",
-        "tit-for-tat dialogue", "purple prose", "uncreative", "tell-don't-show",
-        "weak dialogue", "meandering"
-    ]
-    
+
     total = 0.0
     count = 0
     for criteria, val in valid_scores.items():
         crit_lower = criteria.lower().strip()
-        if any(neg in crit_lower for neg in negative_markers):
+        if crit_lower in NEGATIVE_MARKERS:
             # Invert the score so that a lower original score becomes higher;
             # using (scoring_min + scoring_max) - value guarantees that if value == scoring_max (worst),
             # the inverted value is scoring_min (lowest), and vice-versa.
@@ -227,10 +216,10 @@ def compute_cross_model_stats(scores_by_model_all, scores_by_model_by_iter):
         "pearson_r": pearson_r,
         "kendall_tau": kendall_tau,
         "normalized_components": {
-            "pearson_r": normalize(pearson_r, 0.7, 1.0),
-            "kendall_tau": normalize(kendall_tau, 0.1, 1.0),
+            "pearson_r": normalize(pearson_r, 0.15, 0.7),
+            "kendall_tau": normalize(kendall_tau, 0.15, 0.75),     # 0.60 ≈ very strong
             "anova_f": normalize(f_stat, 0.0, 350.0),
-            "kw_stat": normalize(kw_stat, 0.0, 1800.0),
+            "kw_stat":      normalize(kw_stat,      100.0, 1300.0),  # rare to exceed 400
             "std_dev": normalize(std_across_models, 0.0, 2.6)
         }
     }

@@ -179,7 +179,7 @@ def compute_separability_metrics(
     run_data: dict,
     scores_by_model: Dict[str, List[float]],
     label: str = "raw",
-    scale_factor: float = 1.5,
+    scale_factor: float = 1.0,
 ) -> None:
     """
     Compute a few custom “separability” metrics:
@@ -210,7 +210,7 @@ def compute_separability_metrics(
     for m, sc in scores_by_model.items():
         if sc:
             model_means[m] = statistics.mean(sc)
-            model_ci99[m] = ci_interval(sc, ci_level=0.99)
+            model_ci99[m] = ci_interval(sc, ci_level=0.7) # for v3 we're using ci0.7 overlap
         else:
             model_means[m] = 0.0
             model_ci99[m] = (0.0, 0.0)

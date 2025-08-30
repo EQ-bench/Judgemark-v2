@@ -28,18 +28,18 @@ def signal_handler(signum, frame):
 def parse_args():
     parser = argparse.ArgumentParser(description='Run Judgemark-v2 Benchmark')
     parser.add_argument(
-        '--judge-model',
+        '--judge-models',
         required=True,
-        help='Judge model identifier (e.g., openai/gpt-4)'
+        help='Comma-separated list of judge model identifiers (e.g., "openai/gpt-4,google/gemini-1.5-pro-latest")'
     )
     parser.add_argument(
         '--samples-file',
-        default="data/judgemark_v2.1_samples.json",
+        default="data/judgemark_v3_samples_3_iter.json",
         help='JSON file containing pre-generated samples from various writer models'
     )
     parser.add_argument(
         '--prompts-file',
-        default="data/judge_prompts.json",
+        default="data/judge_prompts_v3_noref_nocot_x96.json",
         help='JSON file containing the partial judge prompts to be filled with test responses'
     )
     parser.add_argument(
@@ -87,6 +87,17 @@ def parse_args():
         default=10,
         help='Maximum scoring value (default: 10)'
     )
+    parser.add_argument(
+        '--ensemble-method',
+        choices=['average', 'median'],
+        default='average',
+        help='Method to aggregate scores from an ensemble of judges (default: average).'
+    )
+    parser.add_argument(
+        '--book-club',
+        action='store_true',
+        help='Enable multi-turn "Book Club" conversational judging. Requires 2+ judge models.'
+    )
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -116,15 +127,17 @@ if __name__ == "__main__":
             break
         logging.info(f"Starting Judgemark-v2 run {i} of {args.num_runs}")
         rid = run_judgemark_v2(
-            judge_model=args.judge_model,
+            judge_models=args.judge_models,
             samples_file=args.samples_file,
             prompts_file=args.prompts_file,
             runs_file=args.runs_file,
             num_threads=args.threads,
             run_id=args.run_id,
             save_raw_judge_output=args.save_raw_judge_output,
-            scoring_min=args.scoring_min,            # <-- New
-            scoring_max=args.scoring_max             # <-- New
+            scoring_min=args.scoring_min,
+            scoring_max=args.scoring_max,
+            ensemble_method=args.ensemble_method,
+            book_club_mode=args.book_club
         )
         run_ids.append(rid)
     

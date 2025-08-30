@@ -1,8 +1,21 @@
-# Judgemark V2
+# Judgemark V2.1
 
-**Judgemark V2** is a benchmark that evaluates how well a language model can judge creative writing. Instead of relying on simple pairwise preferences, Judgemark V2 prompts the judge model to assign numeric scores for multiple literary criteria (e.g., “Nuanced Characters,” “Overwrought,” “Emotionally Engaging”). It then aggregates those scores, measures how consistent and discriminative they are, and derives a final numeric rating of the judge model’s performance.
+**Judgemark V2.1** is a benchmark that evaluates how well a language model can judge creative writing. Instead of relying on pairwise preferences, Judgemark V2 prompts the judge model to assign numeric scores for multiple literary criteria (e.g., “Nuanced Characters,” “Overwrought,” “Emotionally Engaging”). It then aggregates those scores, measures how consistent and discriminative they are, and derives a final numeric rating of the judge model’s performance.
 
 The Judgemark leaderboard can be found here: [https://eqbench.com/judgemark-v2.html](https://eqbench.com/judgemark-v2.html)
+
+# V2.1 Updates
+
+To address the issue of the benchmark saturating, a new set of models was chosen as the source of creative writing outputs that the judge is assessing. This selection of *writer models* was selected from the **top ability range of creative writing leaderboard**. The net effect is that v2.1 more strongly assesses the judge's ability to be discriminative of higher quality writing, and to separate the differences between strong writers. This has added more headroom to the test, as the task is now harder.
+
+We also include the ability to ensemble judge models. A model can ensemble with itself, or with other models, with final scoring done by averaging across the ensemble's votes for a given test item. We see a clear uplift in performance from ensembling judges.
+
+Also added in this update is a "book club" mode. In this mode, several rounds of debate occur between the ensemble on the merits & failings of the piece of writing, followed by a discussion on scoring. Finally, each judge gives their own scores, with the entire book club conversation in context. In practice this typically harms the final score significantly -- judges typically are most performant with the fewest context distractors.
+
+Book club is interesting because it assesses two things strongly: 1. How well the models perform on the judging task, given a very long, potentially distracting context, and 2. how well the judges can *productively reason* about the creative writing judging task. These two things are, typically very hard for language models, so book club represents a ramp-up in difficulty.
+
+To note: running book club mode requires a long context window, and is quite expensive to run, especially with larger ensembles. It's off by default.
+
 
 ## Key Features
 
@@ -41,26 +54,25 @@ Run the benchmark via the main script `judgemark_v2.py`. For instance:
 
 ```bash
 python judgemark_v2.py \
-  --judge-model "openai/gpt-4o-mini" \
-  --samples-file data/judgemark_v2.1_samples.json \
-  --prompts-file data/judge_prompts.json \
+  --judge-models "openai/gpt-4o-mini" \
   --runs-file my_judgemark_runs.json \
-  --threads 20 \
+  --threads 200 \
   --num-runs 1 \
   --save-raw-judge-output
 ```
 
 ### Command-Line Options
 
-- **`--judge-model`** (required): The model identifier (e.g. `openai/gpt-4`, `anthropic/claude-v1`).
-- **`--samples-file`**: Path to the JSON with creative-writing samples to be judged. Default: `data/judgemark_v2.1_samples.json`.
-- **`--prompts-file`**: Path to the JSON with partial prompts for the judge. Default: `data/judge_prompts.json`.
+- **`--judge-models`** (required): A comma-delimited list of model ids that will be assessed as an ensemble (e.g. `openai/gpt-4o,anthropic/claude-sonnet-4`). A single judge is fine, and multiple of the same judge can be stacked.
+- **`--samples-file`**: Path to the JSON with creative-writing samples to be judged. Default: `data/judgemark_v3_samples_3_iter.json`.
+- **`--prompts-file`**: Path to the JSON with partial prompts for the judge. Default: `data/judge_prompts_v3_noref_nocot_x96.json`.
 - **`--runs-file`**: The output JSON to store final run results. Default: `judgemark_v2_runs.json`.
 - **`--run-id`**: A custom run ID for continuing or naming a run (optional).
 - **`--threads`**: Number of threads for parallel scoring. Default: `6`.
 - **`--verbosity`**: Log verbosity: one of `[DEBUG, INFO, WARNING, ERROR, CRITICAL]`.
 - **`--num-runs`**: Number of times to repeat the entire benchmark. Default: `1`.
 - **`--save-raw-judge-output`**: Store the raw text responses from the judge into the results JSON.
+- **`--book-club`**: This enables "book club mode" where the judge ensemble debates the merits of the piece, as well as the scoring decisions, before scoring occurs. Warning: this requires high context length support, and it's expensive to run!
 
 ## How It Works
 
