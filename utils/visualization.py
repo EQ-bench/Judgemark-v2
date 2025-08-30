@@ -7,17 +7,22 @@ from scipy.stats import linregress
 from scipy.stats import spearmanr, theilslopes
 from config.constants import NEGATIVE_MARKERS, MODEL_NAME_REPLACEMENTS
 
-
-def create_side_by_side_score_charts(run_data: Dict, judge_model: str, samples_data: Dict):
+def create_side_by_side_score_charts(run_data: Dict, judge_model: str, samples_data: Dict,
+                                     scoring_min: float = 0, scoring_max: float = 10):
     """
-    Produces two figures:
+    Produces three figures:
       • Figure #1 with three subplots side-by-side:
-        (1) Raw Scores bar chart (+ 95% CI)
-        (2) Calibrated Scores bar chart (+ 95% CI)
-        (3) Heatmap of all per-criterion scores across each model (10 - score for negative markers).
+          (1) Raw Scores bar chart (+ 95% CI)
+          (2) Calibrated Scores bar chart (+ 95% CI)
+          (3) Heatmap of all per-criterion scores across each model (with negative markers flipped),
+              with an extra spacer row (all 0s) second-to-bottom and the combined row at the bottom.
+              The colormap scale is fixed from 0 to 45%.
       • Figure #2: A 4×4 grid of mini scatter plots, one per model (up to 16),
-        showing item length (chars) vs. aggregated_score_raw. A linear regression
-        line and correlation stats are included for each model if enough points exist.
+          showing item length (chars) vs. aggregated_score_raw. A linear regression
+          line and correlation stats are included for each model if enough points exist.
+      • Figure #3: A standalone heatmap showing the Numeric Scoring Distribution.
+          Title: "Numeric Scoring Distribution -- Judge: [judge model]"
+          (The colormap scale is fixed from 0 to 45%).
     """
     # -------------------------------------------------------------------
     # 1) The main (raw / calibrated / heatmap) figure
@@ -46,8 +51,15 @@ def create_side_by_side_score_charts(run_data: Dict, judge_model: str, samples_d
     cal_cis     = [cal_cis[i]     for i in sorted_indices]
     
     # 1.A) Build data for the heatmap: per-criterion scores (with negative flips)
-    #     We gather them from run_data "parsed_scores"
-    #     Then we convert them to 0..10 bins and store percentage distribution.
+    #     We gather them from run_data["results"] -> parsed_scores and then bin them.
+    #
+    # Instead of generating bins from scoring_min to scoring_max+2 (which for scores 1–3 gives [1,2,3,4]),
+    # we generate bins so that each integer score gets its own bin. For example, for scores 1,2,3,
+    # the bin edges will be: 0.5, 1.5, 2.5, 3.5.
+    bins = np.arange(scoring_min - 0.5, scoring_max + 1, 1)
+    # The bin centers (i.e. the score labels) are:
+    bin_centers = np.arange(scoring_min, scoring_max + 1)
+
     all_scores_by_model = {m: [] for m in model_names}
     results = run_data.get("results", {})
     
@@ -63,17 +75,15 @@ def create_side_by_side_score_charts(run_data: Dict, judge_model: str, samples_d
                 if not isinstance(parsed_scores, dict):
                     continue
                 for crit_name, val in parsed_scores.items():
-                    if isinstance(val, (int, float)) and 0 <= val <= 10:
+                    if isinstance(val, (int, float)) and scoring_min <= val <= scoring_max:
                         crit_lower = crit_name.strip().lower()
-                        # Flip negative
+                        # Flip negative markers using the new formula:
                         if any(nm in crit_lower for nm in NEGATIVE_MARKERS):
-                            final_val = 10 - val
+                            final_val = scoring_max - val + scoring_min
                         else:
                             final_val = val
                         all_scores_by_model[model_name].append(final_val)
     
-    # Convert to a 2D array for the heatmap (rows = models, columns = bins)
-    bins = np.linspace(0, 10, 11)
     heatmap_rows = []
     for m in model_names:
         scores = all_scores_by_model[m]
@@ -81,14 +91,32 @@ def create_side_by_side_score_charts(run_data: Dict, judge_model: str, samples_d
             counts, _ = np.histogram(scores, bins=bins)
             pct = (counts / len(scores)) * 100.0
         else:
-            pct = np.zeros(len(bins)-1, dtype=float)
+            pct = np.zeros(len(bins) - 1, dtype=float)
         heatmap_rows.append(pct)
     heatmap_data = np.array(heatmap_rows, dtype=float)
+
+    # -------------------------------
+    # Append a spacer row (all 0s) and a combined row at the bottom
+    # -------------------------------
+    all_combined_scores = []
+    for scores in all_scores_by_model.values():
+        all_combined_scores.extend(scores)
+    if all_combined_scores:
+        counts_combined, _ = np.histogram(all_combined_scores, bins=bins)
+        combined_pct = (counts_combined / len(all_combined_scores)) * 100.0
+    else:
+        combined_pct = np.zeros(len(bins) - 1, dtype=float)
+    
+    # Create a spacer row of zeros
+    spacer = np.zeros(heatmap_data.shape[1], dtype=float)
+    
+    # Append spacer row and then the combined row
+    heatmap_data = np.vstack([heatmap_data, spacer, combined_pct])
+    heatmap_model_names = model_names + ["", "Combined"]
+    # -------------------------------
     
     # 1.B) Plot the main figure with 3 subplots
-    fig1, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 7))  # Increased height
-
-    # Increase the base font size for all text elements
+    fig1, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 7))
     plt.rcParams.update({'font.size': 14})
     
     # (A) Raw bar chart    
@@ -116,16 +144,15 @@ def create_side_by_side_score_charts(run_data: Dict, judge_model: str, samples_d
     ax2.grid(True, alpha=0.3)
     ax2.tick_params(axis='y', pad=10)
 
-    # (C) Heatmap
-    bin_edges = bins[:-1]
-    ax3.set_xticks(np.arange(len(bin_edges)))
-    ax3.set_xticklabels([str(int(be)) for be in bin_edges])
-    im = ax3.imshow(heatmap_data, aspect='auto', origin='upper', cmap='plasma')
-    #ax3.set_xticks(np.arange(len(bin_centers)))
-    #ax3.set_xticklabels([f"{bc:.0f}" for bc in bin_centers], fontsize=12)
-    ax3.set_yticks(np.arange(len(model_names)))
-    ax3.set_yticklabels(model_names, fontsize=12)
-    ax3.set_xlabel("Score Bin (0–10)", fontsize=14)
+    # (C) Heatmap (embedded in the main figure)
+    # Use the bin centers for the x-axis labels
+    ax3.set_xticks(np.arange(len(bin_centers)))
+    ax3.set_xticklabels([str(int(bc)) for bc in bin_centers])
+    # Fix the colormap scale from 0 to 45%
+    im = ax3.imshow(heatmap_data, aspect='auto', origin='upper', cmap='plasma', vmin=0, vmax=45)
+    ax3.set_yticks(np.arange(len(heatmap_model_names)))
+    ax3.set_yticklabels(heatmap_model_names, fontsize=12)
+    ax3.set_xlabel(f"Score Bin ({scoring_min}–{scoring_max})", fontsize=14)
     ax3.set_title("Per-Criterion Score Distribution (Heatmap)", fontsize=16)
     ax3.tick_params(axis='y', pad=10)
     
@@ -136,50 +163,35 @@ def create_side_by_side_score_charts(run_data: Dict, judge_model: str, samples_d
     cbar.formatter = ticker.PercentFormatter(decimals=1)
     cbar.update_ticks()
 
-    # Overall title
-    
+    # Overall title for Figure #1
     sanitized_judge = re.sub(r"[^\w\-]", "-", judge_model.replace("/", "__"))
     fig1.suptitle(f"Judgemark: Raw/Calibrated/Heatmap - Judge: {judge_model}", fontsize=20)
     
-    # Adjust layout with more space
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    
     plt.savefig(f"results/charts/judgemark_3chart_{sanitized_judge}.png", 
-                bbox_inches='tight', 
-                dpi=150,
-                pad_inches=0.5)
+                bbox_inches='tight', dpi=150, pad_inches=0.5)
     plt.close(fig1)
 
     # -------------------------------------------------------------------
-    # 2) Second Figure: A 4×4 grid of scatter plots (per-model), 
-    #    where X = item length, Y = aggregated_score_raw.
-    #    We'll gather text straight from samples_data, compute len(...).
+    # 2) Second Figure: 4×4 grid of scatter plots (per-model)
     # -------------------------------------------------------------------
-    # If you want exactly 16 models, skip any extra or exclude some.
-    # Example: exclude "gemini-1.5-pro-001" 
     excluded_models = {"gemini-1.5-pro-001"}
     model_list_for_scatter = [m for m in model_names if m not in excluded_models]
     
-    # If it's still longer than 16, slice it to 16
     if len(model_list_for_scatter) > 16:
         model_list_for_scatter = model_list_for_scatter[:16]
 
-    # Build figure and subplots: 4x4
-    fig2, axes2 = plt.subplots(4, 4, figsize=(20, 20))  # each cell is a scatter
+    fig2, axes2 = plt.subplots(4, 4, figsize=(20, 20))
     fig2.suptitle(f"Judgemark: Per-Model Length vs. Score - Judge: {judge_model}", fontsize=18)
     
-    # We might have fewer than 16 models. We'll track them by row & col.
     for idx, mname in enumerate(model_list_for_scatter):
         row = idx // 4
         col = idx % 4
         ax = axes2[row, col]
         
-        # Collect all (length, raw_score) for this model
         length_vals = []
         score_vals  = []
         
-        # For each (iteration_key, item_id), find the text in samples_data,
-        # find aggregated_score_raw in run_data, then store pairs
         model_res = run_data["results"].get(mname, {})
         for it_key, it_dict in model_res.items():
             if not isinstance(it_dict, dict):
@@ -191,15 +203,13 @@ def create_side_by_side_score_charts(run_data: Dict, judge_model: str, samples_d
                 if not isinstance(raw_score, (int, float)):
                     continue
 
-                # Look up the text in samples_data:
                 text = (samples_data
                         .get(mname, {})
                         .get("samples", {})
                         .get(it_key, {})
-                        .get(item_id, "")) 
+                        .get(item_id, ""))
                 text_len = len(text)
 
-                # If it's non-empty text
                 if text_len > 0:
                     length_vals.append(text_len)
                     score_vals.append(raw_score)
@@ -211,14 +221,12 @@ def create_side_by_side_score_charts(run_data: Dict, judge_model: str, samples_d
         if len(length_vals) > 1:
             ax.scatter(length_vals, score_vals, alpha=0.4, color='blue')
             
-            # -- Rank-based correlation (Spearman) --
+            # Compute Spearman rank-based correlation
             rho, p_value = spearmanr(length_vals, score_vals)
             
-            # -- Robust linear fit (Theil-Sen) --
-            # returns slope, intercept, lower_slope, upper_slope
+            # Compute a robust linear fit (Theil-Sen)
             slope, intercept, lo_slope, hi_slope = theilslopes(score_vals, length_vals, alpha=0.95)
             
-            # Build the line
             xline = np.linspace(min(length_vals), max(length_vals), 200)
             yline = slope * xline + intercept
             ax.plot(xline, yline, color='red', linewidth=2,
@@ -228,7 +236,7 @@ def create_side_by_side_score_charts(run_data: Dict, judge_model: str, samples_d
             ax.text(0.5, 0.5, "Not enough data",
                     ha='center', va='center', color='red', transform=ax.transAxes)
     
-    # If we have fewer than 16 models, blank out remaining subplots
+    # Blank out any unused subplots if fewer than 16 models are present
     total_subplots = 16
     for i in range(len(model_list_for_scatter), total_subplots):
         row = i // 4
@@ -236,5 +244,29 @@ def create_side_by_side_score_charts(run_data: Dict, judge_model: str, samples_d
         axes2[row, col].axis("off")
     
     plt.tight_layout()
-    plt.savefig(f"results/charts/judgemark_scattergrid_{sanitized_judge}.png", bbox_inches='tight', dpi=200)
+    plt.savefig(f"results/charts/judgemark_scattergrid_{sanitized_judge}.png",
+                bbox_inches='tight', dpi=200)
     plt.close(fig2)
+
+    # -------------------------------------------------------------------
+    # 3) Third Figure: Standalone Heatmap for Numeric Scoring Distribution
+    # -------------------------------------------------------------------
+    fig3, ax_heatmap = plt.subplots(figsize=(10, 7))
+    # Fix the colormap scale from 0 to 45% here as well
+    im_heatmap = ax_heatmap.imshow(heatmap_data, aspect='auto', origin='upper', cmap='plasma', vmin=0, vmax=45)
+    ax_heatmap.set_xticks(np.arange(len(bin_centers)))
+    ax_heatmap.set_xticklabels([str(int(bc)) for bc in bin_centers], fontsize=12)
+    ax_heatmap.set_yticks(np.arange(len(heatmap_model_names)))
+    ax_heatmap.set_yticklabels(heatmap_model_names, fontsize=12)
+    ax_heatmap.set_xlabel(f"Score Bin ({scoring_min}–{scoring_max})", fontsize=14)
+    ax_heatmap.set_ylabel("Model", fontsize=14)
+    ax_heatmap.set_title(f"Numeric Scoring Distribution -- Judge: {judge_model}", fontsize=16)
+    
+    cbar_heatmap = plt.colorbar(im_heatmap, ax=ax_heatmap)
+    cbar_heatmap.set_label("% of Criteria in Bin", fontsize=14)
+    cbar_heatmap.ax.tick_params(labelsize=12)
+    
+    plt.tight_layout()
+    plt.savefig(f"results/charts/judgemark_heatmap_{sanitized_judge}.png", 
+                bbox_inches='tight', dpi=150)
+    plt.close(fig3)

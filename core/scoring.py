@@ -8,34 +8,64 @@ import re
 from config.constants import REFERENCE_MODEL_SCORES
 from utils.stats import normalize
 
-def parse_scores(judge_model_response: str) -> Dict[str,float]:
-    """
-    Extracts zero or more named numeric scores from a text using a simple Regex pattern:
+import re
 
-      <metric name>: <score>
-
-    The metric name can be any string without newlines or colons.
-    The score can be a positive or negative float or integer.
-    Example lines in the judge output might be:
-      "Realism Score: 7.5"
-      "Melodramatic: 2"
+def parse_scores(judge_model_response: str) -> Dict[str, float]:
     """
-    scores = {}
-    # Look for lines or statements like "Something: 3.5" or "Something Score 3.5"
-    pattern = r'(.*?):\s*(?:Score\s+)?(-?\d+(?:\.\d+)?)'
-    matches = re.findall(pattern, judge_model_response)
-    for match in matches:
-        metric_name = match[0].strip()
-        numeric_val = float(match[1])
-        scores[metric_name] = numeric_val
+    Parses score lines with flexible formatting. Accepts any of these formats:
+    
+      **Quality:** 7.5
+      **Quality**: 7.5
+      Quality: 7.5
+      **Quality:** **7.5**
+      **Quality:** [7.5]
+      Quality: [**7.5**]
+      
+    Any extra text outside the valid one-line score format is ignored.
+    """
+    # The pattern explanation:
+    # 1. ^\s*                            - Allow leading whitespace at the start of the line.
+    # 2. (?:\*\*)?([^\n:\[\]]{2,100}):(?:\*\*)?
+    #      - Optionally match leading '**'
+    #      - Capture the metric name (any characters except newline, colon, or brackets)
+    #        (length between 2 and 100 characters)
+    #      - Match the colon, optionally preceded/followed by '**'
+    # 3. \s*                             - Allow optional whitespace after the colon.
+    # 4. (?:\[)?(?:\*\*)?(-?\d+(?:\.\d+)?)(?:\*\*)?(?:\])?
+    #      - Optionally match an opening bracket '['
+    #      - Optionally match a '**' to indicate a bold number
+    #      - Capture the number (an integer or decimal, possibly negative)
+    #      - Optionally match a closing '**'
+    #      - Optionally match a closing bracket ']'
+    # 5. \s*$                           - Allow trailing whitespace until the end of the line.
+    
+    pattern = (
+        r'^\s*'
+        r'(?:\*\*)?([^\n:\[\]]{2,100}):(?:\*\*)?'
+        r'\s*'
+        r'(?:\[)?(?:\*\*)?'
+        r'(-?\d+(?:\.\d+)?)'
+        r'(?:\*\*)?(?:\])?'
+        r'\s*$'
+    )
+    
+    matches = re.findall(pattern, judge_model_response, re.MULTILINE)
+    scores = {metric.strip(): float(score) for metric, score in matches}
     return scores
 
-def compute_raw_score(scores: Dict[str,float]) -> float:
+
+def compute_raw_score(scores: Dict[str, float], scoring_min: float = 0, scoring_max: float = 10) -> float:
     """
-    Given a dict of {criteria: numeric score}, compute a single raw score by adjusting 
-    negative-themed criteria by inverting them, then normalizing to 0-10 scale.
+    Given a dict of {criteria: numeric score}, compute a single aggregated raw score by:
+      1. Filtering scores that fall within the provided scoring range [scoring_min, scoring_max].
+      2. For negative-themed criteria (e.g. "melodramatic", "shallow resolution", etc.), inverting 
+         the value via: new_value = (scoring_min + scoring_max) - value.
+      3. Taking the average over all (transformed) valid scores.
+      4. Scaling the average from the original range [scoring_min, scoring_max] into a canonical 1–10 range.
+
+    If fewer than 10 valid scores are found, returns None.
     """
-    valid_scores = {k: v for k, v in scores.items() if 0 <= v <= 10}
+    valid_scores = {k: v for k, v in scores.items() if scoring_min <= v <= scoring_max}
     
     if len(valid_scores) < 10:
         return None
@@ -51,16 +81,30 @@ def compute_raw_score(scores: Dict[str,float]) -> float:
         "weak dialogue", "meandering"
     ]
     
-    sum_val = 0.0
+    total = 0.0
+    count = 0
     for criteria, val in valid_scores.items():
         crit_lower = criteria.lower().strip()
         if any(neg in crit_lower for neg in negative_markers):
-            sum_val += (10 - val)
+            # Invert the score so that a lower original score becomes higher;
+            # using (scoring_min + scoring_max) - value guarantees that if value == scoring_max (worst),
+            # the inverted value is scoring_min (lowest), and vice-versa.
+            new_val = (scoring_min + scoring_max) - val
         else:
-            sum_val += val
+            new_val = val
+        total += new_val
+        count += 1
+
+    avg = total / count
+
+    # Now, linearly map the average from [scoring_min, scoring_max] to [1, 10].
+    # Formula: scaled = 1 + (avg - scoring_min) * ((10 - 1) / (scoring_max - scoring_min))
+    if scoring_max == scoring_min:
+        scaled = 1  # avoid division by zero; degenerate case
+    else:
+        scaled = 1 + (avg - scoring_min) * (9 / (scoring_max - scoring_min))
     
-    avg_val = sum_val / len(valid_scores)
-    return round(avg_val, 2)
+    return round(scaled, 2)
 
 def confidence_interval_95(data: List[float]) -> float:
     """
@@ -107,8 +151,9 @@ def compute_model_level_stats(scores_by_model, lengths_by_model):
         
         # Length correlation
         if len(lengths) == len(scores):
-            corr, _ = scipy.stats.pearsonr(lengths, scores)
+            corr, corr_p = scipy.stats.pearsonr(lengths, scores)
             stats["length_correlation"] = corr
+            stats["length_correlation_p"] = corr_p
         
         model_stats[model_name] = stats
     return model_stats

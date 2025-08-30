@@ -57,7 +57,11 @@ def process_sample(model_name: str, iteration_key: str, item_id: str, item_text:
         judge_response = send_to_judge_model(messages, judge_model=judge_model)
         
         extracted_scores = parse_scores(judge_response)
-        raw_score = compute_raw_score(extracted_scores)
+        # Retrieve scoring range from run_data (defaults to 0–10 if not set)
+        scoring_range = run_data.get("scoring_range", {"min": 0, "max": 10})
+        scoring_min = scoring_range.get("min", 0)
+        scoring_max = scoring_range.get("max", 10)
+        raw_score = compute_raw_score(extracted_scores, scoring_min, scoring_max)
         
         with lock:
             storage_dict = {
@@ -77,6 +81,7 @@ def process_sample(model_name: str, iteration_key: str, item_id: str, item_text:
         if raw_score is not None:
             logging.debug(f"Processed {model_name}/{iteration_key}/{item_id}, raw score: {raw_score:.2f}")
         else:
+            print(judge_response)
             logging.warning(f"Failed to parse enough scores for {model_name}/{iteration_key}/{item_id}")
             
     except Exception as e:
@@ -96,7 +101,7 @@ def process_sample(model_name: str, iteration_key: str, item_id: str, item_text:
             })
             save_json_file(runs, runs_file)
 
-def finalize_scores_and_compute_judgemark(runs: dict, run_key: str, samples_data: dict):
+def finalize_scores_and_compute_judgemark(runs: dict, run_key: str, samples_data: dict, scoring_min: float, scoring_max: float):
     """
     Compute metrics for both raw and calibrated scores, including stability tests,
     normalized components, and detailed distributions.
@@ -195,6 +200,26 @@ def finalize_scores_and_compute_judgemark(runs: dict, run_key: str, samples_data
     run_data["raw_model_stats"] = compute_model_level_stats(raw_scores_by_model_all, lengths_by_model)
     run_data["calibrated_model_stats"] = compute_model_level_stats(calibrated_scores_by_model_all, lengths_by_model)
 
+    # Calculate length correlation stats averaged across the models
+    raw_length_corrs = [stats["length_correlation"] for stats in run_data["raw_model_stats"].values()]
+    raw_corr_avg, raw_p_avg = statistics.mean(raw_length_corrs), statistics.mean([stats["length_correlation_p"] for stats in run_data["raw_model_stats"].values()])
+
+    cal_length_corrs = [stats["length_correlation"] for stats in run_data["calibrated_model_stats"].values()] 
+    cal_corr_avg, cal_p_avg = statistics.mean(cal_length_corrs), statistics.mean([stats["length_correlation_p"] for stats in run_data["calibrated_model_stats"].values()])
+
+    run_data["length_correlation"] = {
+        "raw": {
+            "pearson_corr": raw_corr_avg,
+            "pearson_p": raw_p_avg
+        },
+        "calibrated": {
+            "pearson_corr": cal_corr_avg,
+            "pearson_p": cal_p_avg
+        }
+    }
+    logging.info("--LENGTH CORRELATION--")
+    logging.info(run_data["length_correlation"])
+
     # 5. Cross-model stats
     run_data["raw_cross_model_stats"] = compute_cross_model_stats(
         scores_by_model_all=raw_scores_by_model_all,
@@ -209,7 +234,6 @@ def finalize_scores_and_compute_judgemark(runs: dict, run_key: str, samples_data
     compute_separability_metrics(run_data, raw_scores_by_model_all, label="raw")
     compute_separability_metrics(run_data, calibrated_scores_by_model_all, label="calibrated")
 
-    
     # 8. Compute iteration stability for raw & calibrated
     compute_iteration_stability(run_data, label="raw")  
     compute_iteration_stability(run_data, label="calibrated")
@@ -224,23 +248,19 @@ def finalize_scores_and_compute_judgemark(runs: dict, run_key: str, samples_data
     # 9. Compute the final Judgemark scores (one using raw stats, one using calibrated)
 
     # -- (A) RAW Judgemark
-    # Pull out raw stats + separability metrics
     raw_stats = run_data["raw_cross_model_stats"]
-    raw_norm = raw_stats["normalized_components"]  # "std_dev", "kw_stat", etc.
+    raw_norm = raw_stats["normalized_components"]
     
-    # Add your own normalization steps as needed
     raw_emd = run_data["separability_metrics"]["raw"]["emd"]["average"]
     raw_emd_norm = normalize(raw_emd, 0, 4)
     raw_overlap_mag = run_data["separability_metrics"]["raw"]["ci99_overlap_magnitude_sum"]
     raw_overlap_mag_norm = normalize(raw_overlap_mag, 0, 26, False)
     cohens_d_norm_raw = run_data["separability_metrics"]["raw"]["cohens_d_norm"]
-    # modulate ci99 overlap by cohens-d, because weak models have low overlap because they score everything in a tight range.
     raw_overlap_mag_norm = modulate_x_by_y(raw_overlap_mag_norm, cohens_d_norm_raw)
 
     raw_norm["ci99_overlap_magnitude_sum_norm"] = raw_overlap_mag_norm
     raw_norm["ci99_overlap_magnitude_pct_norm"] = normalize(run_data["separability_metrics"]["raw"]["ci99_overlap_percentage_adjacent_avg"], 0, 1, False)
 
-    # Range of raw model means
     raw_score_range = (
         max(run_data["raw_model_stats"][model]["mean"] for model in run_data["raw_model_stats"])
         - min(run_data["raw_model_stats"][model]["mean"] for model in run_data["raw_model_stats"])
@@ -249,24 +269,17 @@ def finalize_scores_and_compute_judgemark(runs: dict, run_key: str, samples_data
     raw_score_range_norm = normalize(raw_score_range, 0, 10)
     raw_norm["raw_score_range_norm"] = raw_score_range_norm
 
-    # Add Kendall's tau from the randomization-based stability measure
     raw_norm["kendall_tau_bootstrapped"] = normalize(random_tau_raw, 0.4, 1.0)
 
-    # compute an aggregated separability metric
     raw_separability = (
-        raw_norm["std_dev"] # std deviation *between* models (separability)
-        + raw_norm["kw_stat"] # kruskal-wallis (separability)
-        + raw_norm["ci99_overlap_magnitude_pct_norm"] # confidence interval overlap between adjacently ranked models (separability)
-        + raw_norm["raw_score_range_norm"] # range of assigned scores (separability)
-        + run_data["separability_metrics"]["raw"]["modulated_ci95"] # average ci95 per model scored (score stability + separability)
-        + raw_emd_norm # earth-movers distance (separability)
-    ) / 6.0
+        + raw_norm["kw_stat"]
+        + raw_norm["ci99_overlap_magnitude_pct_norm"]
+    ) / 2.0
 
-    # Combine into final raw Judgemark
     final_score_raw = (
-        raw_norm["kendall_tau_bootstrapped"] # correlation between iterations (ranking stability)
-        + raw_norm["kendall_tau"] # correlation with lmsys arena score (corr to human pref)        
-        + 4 * raw_separability # aggregate of separability metrics
+        raw_norm["kendall_tau_bootstrapped"]
+        + raw_norm["kendall_tau"]
+        + 4 * raw_separability
     ) / 6.0
     run_data["final_judgemark_score_elements_raw"] = {
         "norm_stability_between_iterations": raw_norm["kendall_tau_bootstrapped"],
@@ -289,12 +302,10 @@ def finalize_scores_and_compute_judgemark(runs: dict, run_key: str, samples_data
         run_data["separability_metrics"]["calibrated"]["ci99_overlap_magnitude_sum"], 0, 26, False
     )
     cohens_d_norm_calibrated = run_data["separability_metrics"]["calibrated"]["cohens_d_norm"]
-    # modulate ci99 overlap by cohens-d, because weak models have low overlap because they score everything in a tight range.
     overlap_magnitude_norm = modulate_x_by_y(overlap_magnitude_norm, cohens_d_norm_calibrated)
     norm["ci99_overlap_magnitude_sum_norm"] = overlap_magnitude_norm
     norm["ci99_overlap_magnitude_pct_norm"] = normalize(run_data["separability_metrics"]["calibrated"]["ci99_overlap_percentage_adjacent_avg"], 0, 1, False)
 
-    # Range of calibrated model means
     calibrated_score_range = (
         max(run_data["calibrated_model_stats"][model]["mean"]
             for model in run_data["calibrated_model_stats"])
@@ -305,23 +316,17 @@ def finalize_scores_and_compute_judgemark(runs: dict, run_key: str, samples_data
     calibrated_score_range_norm = normalize(calibrated_score_range, 0, 10)
     norm["calibrated_score_range_norm"] = calibrated_score_range_norm
 
-    # Kendall's tau from the randomized stability measure
     norm["kendall_tau_bootstrapped"] = normalize(random_tau_cal, 0.4, 1.0)
 
-    # compute an aggregated separability metric
     calibrated_separability = (
-        norm["std_dev"] # std deviation *between* models (separability)
-        + norm["kw_stat"] # kruskal-wallis (separability)
-        + norm["ci99_overlap_magnitude_pct_norm"] # confidence interval overlap between adjacently ranked models (separability)
-        + norm["calibrated_score_range_norm"] # range of assigned scores (separability)
-        + run_data["separability_metrics"]["calibrated"]["modulated_ci95"] # average ci95 per model scored (score stability + separability)
-        + emd_norm # earth-movers distance (separability)
-    ) / 6.0
+        + norm["kw_stat"]
+        + norm["ci99_overlap_magnitude_pct_norm"]
+    ) / 2.0
 
     final_score_calibrated = (
-        norm["kendall_tau_bootstrapped"] # correlation between iterations (ranking stability)        
-        + norm["kendall_tau"] # correlation with lmsys arena score (corr to human pref)                
-        + 4 * calibrated_separability # aggregate of separability metrics  
+        norm["kendall_tau_bootstrapped"]
+        + norm["kendall_tau"]
+        + 4 * calibrated_separability
     ) / 6.0
     run_data["final_judgemark_score_elements_calibrated"] = {
         "norm_stability_between_iterations": norm["kendall_tau_bootstrapped"],
@@ -336,7 +341,7 @@ def finalize_scores_and_compute_judgemark(runs: dict, run_key: str, samples_data
     run_data["final_judgemark_score"] = final_score_calibrated
 
     # 10. Create visualizations + logs
-    create_side_by_side_score_charts(run_data, run_data["judge_model"], samples_data)
+    create_side_by_side_score_charts(run_data, run_data["judge_model"], samples_data, scoring_min, scoring_max)
     
     log_score_summary(
         "RAW SCORES", 
@@ -364,7 +369,9 @@ def run_judgemark_v2(
     runs_file: str,
     num_threads: int,
     run_id: str = None,
-    save_raw_judge_output: bool = False
+    save_raw_judge_output: bool = False,
+    scoring_min: float = 0,
+    scoring_max: float = 10
 ) -> str:
     global executor, should_exit
     
@@ -380,6 +387,15 @@ def run_judgemark_v2(
     samples_data = load_json_file(samples_file)
     judge_prompts = load_json_file(prompts_file)
     
+    # --- NEW: Replace hard-coded scoring range strings in judge prompts ---
+    if scoring_min != 0 or scoring_max != 10:
+        for key, prompt in judge_prompts.items():
+            if isinstance(prompt, str):
+                prompt = prompt.replace("0-10 scale", f"{scoring_min}-{scoring_max} scale")
+                prompt = prompt.replace("Score 0-10", f"Score {scoring_min}-{scoring_max}")
+                prompt = prompt.replace("0 or 10", f"{scoring_min} or {scoring_max}")
+                judge_prompts[key] = prompt
+
     # Initialize or get existing run data
     if run_key not in runs:
         runs[run_key] = {
@@ -388,11 +404,15 @@ def run_judgemark_v2(
             "status": "running",
             "samples_file": samples_file,
             "prompts_file": prompts_file,
-            "results": {}
+            "results": {},
+            "scoring_range": {"min": scoring_min, "max": scoring_max}
         }
         save_json_file(runs, runs_file)
     
     run_data = runs[run_key]
+    # Ensure scoring_range exists in case of resumed runs.
+    run_data.setdefault("scoring_range", {"min": scoring_min, "max": scoring_max})
+    
     items_to_process = []
     
     # If run exists, scan for items needing retry
@@ -418,13 +438,15 @@ def run_judgemark_v2(
                     )
                     
                     if needs_retry:
+                        if item_id not in judge_prompts:
+                            raise(Exception("Item ID " + str(item_id) + " not found in judge prompts file."))
                         items_to_process.append({
-                            "model_name": model_name,
-                            "iteration_key": iteration_key,
-                            "item_id": item_id,
-                            "item_text": item_text,
-                            "prompt_template": judge_prompts.get(item_id, "")
-                        })
+                        "model_name": model_name,
+                        "iteration_key": iteration_key,
+                        "item_id": item_id,
+                        "item_text": item_text,
+                        "prompt_template": judge_prompts[item_id]
+                    })
         
         if items_to_process:
             logging.info(f"Found {len(items_to_process)} items to process in existing run {run_key}")
@@ -438,12 +460,14 @@ def run_judgemark_v2(
             for iteration_key, iteration_items in samples_dict.items():
                 print(iteration_key)
                 for item_id, item_text in iteration_items.items():
+                    if item_id not in judge_prompts:
+                        raise(Exception("Item ID " + str(item_id) + " not found in judge prompts file."))
                     items_to_process.append({
                         "model_name": model_name,
                         "iteration_key": iteration_key,
                         "item_id": item_id,
                         "item_text": item_text,
-                        "prompt_template": judge_prompts.get(item_id, "")
+                        "prompt_template": judge_prompts[item_id]
                     })
     
     # Ensure concurrency lock
@@ -508,7 +532,7 @@ def run_judgemark_v2(
                     lock, num_threads
                 )
             # Compute final stats
-            finalize_scores_and_compute_judgemark(runs, run_key, samples_data)
+            finalize_scores_and_compute_judgemark(runs, run_key, samples_data, scoring_min, scoring_max)
 
         # Save final
         save_json_file(runs, runs_file)

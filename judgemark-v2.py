@@ -74,6 +74,19 @@ def parse_args():
         default=False,
         help='If set, store the raw judge model output in the results JSON (default: false)'
     )
+    # --- NEW: scoring range arguments ---
+    parser.add_argument(
+        '--scoring-min',
+        type=float,
+        default=0,
+        help='Minimum scoring value (default: 0)'
+    )
+    parser.add_argument(
+        '--scoring-max',
+        type=float,
+        default=10,
+        help='Maximum scoring value (default: 10)'
+    )
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -109,7 +122,9 @@ if __name__ == "__main__":
             runs_file=args.runs_file,
             num_threads=args.threads,
             run_id=args.run_id,
-            save_raw_judge_output=args.save_raw_judge_output
+            save_raw_judge_output=args.save_raw_judge_output,
+            scoring_min=args.scoring_min,            # <-- New
+            scoring_max=args.scoring_max             # <-- New
         )
         run_ids.append(rid)
     

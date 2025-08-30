@@ -349,7 +349,7 @@ def compute_iteration_stability(run_data: dict, label="raw"):
         all_taus = [v["kendall_tau"] for v in pairwise_rank_corr.values() if not math.isnan(v["kendall_tau"])]
         run_data["iteration_stability"][label]["ranking_stability"]["average_kendall_tau"] = statistics.mean(all_taus) if all_taus else 0.0
 
-def process_stability_test_item(model_name, iteration_key, item_id, item_text, prompt_template, judge_model) -> float:
+def process_stability_test_item(model_name, iteration_key, item_id, item_text, prompt_template, judge_model, scoring_min, scoring_max) -> float:
     """Process a single judge request for the stability test. Returns the aggregated score or 0.0 if failed."""
     global should_exit
     if should_exit:
@@ -363,7 +363,7 @@ def process_stability_test_item(model_name, iteration_key, item_id, item_text, p
         judge_response = send_to_judge_model(messages, judge_model=judge_model)
         
         extracted_scores = parse_scores(judge_response)
-        item_score = compute_raw_score(extracted_scores)
+        item_score = compute_raw_score(extracted_scores, scoring_min, scoring_max)
         
         # Only return actual valid scores, never None
         return item_score if isinstance(item_score, (int, float)) and item_score > 0.0 else 0.0
@@ -371,7 +371,7 @@ def process_stability_test_item(model_name, iteration_key, item_id, item_text, p
         logging.error(f"Error in stability test item {model_name}/{iteration_key}/{item_id}: {str(e)}")
         return 0.0
 
-def run_stability_test(run_data, judge_model, judge_prompts, samples_data, runs, runs_file, lock, num_threads):
+def run_stability_test(run_data, judge_model, judge_prompts, samples_data, runs, runs_file, lock, num_threads, scoring_min, scoring_max):
     """Run stability test, retrying any missing entries to reach STABILITY_REPS per item."""
     logging.info("Running stability test for selected items...")
     
@@ -422,7 +422,7 @@ def run_stability_test(run_data, judge_model, judge_prompts, samples_data, runs,
                 process_stability_test_item,
                 item["model"], item["iteration"], item["item_id"],
                 item["item_text"], item["prompt_template"],
-                judge_model
+                judge_model, scoring_min, scoring_max
             )
             futures_to_items[future] = item
         
