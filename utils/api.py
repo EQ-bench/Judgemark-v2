@@ -186,6 +186,20 @@ You are to anchor your assigned scores to these descriptions of the scoring rang
                     "exclude": True #Set to true to exclude reasoning tokens from response
                 }
 
+            if False and judge_model == 'anthropic/claude-sonnet-4.5': 
+                print('!! sonnet low thinking')
+                data["reasoning"] = {                
+                    "effort": "low", # Can be "high", "medium", or "low" (OpenAI-style)
+                    #"max_tokens": 1, # Specific token limit (Anthropic-style)                
+                    "exclude": True #Set to true to exclude reasoning tokens from response
+                }
+
+            if judge_model == 'x-ai/grok-4-fast': 
+                print('!! grok no thinking')
+                data["reasoning"] = {                
+                    "enabled": False
+                }
+
             if judge_model in ['o3', 'o4-mini']:
                 del data['max_tokens']
                 del data['temperature']
@@ -212,12 +226,17 @@ You are to anchor your assigned scores to these descriptions of the scoring rang
                     "effort": "low", # Can be "high", "medium", or "low" (OpenAI-style)                    
                     "exclude": True #Set to true to exclude reasoning tokens from response
                 }
+            if judge_model == 'z-ai/glm-4.5-air':
+                data['messages'][-1]['content'] += '\n/nothink'
 
             response = requests.post(BASE_URL, headers=HEADERS, json=data, timeout=REQUEST_TIMEOUT)
 
             response.raise_for_status()
             res_json = response.json()
-            return res_json['choices'][0]['message']['content']
+
+            response_str = res_json['choices'][0]['message']['content']
+            #print(response_str)
+            return response_str
         except requests.Timeout as e:
             last_err = e
             logging.error(f"Request timed out on attempt {attempt} for judge model {judge_model}")

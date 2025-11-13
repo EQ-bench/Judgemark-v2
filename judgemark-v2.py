@@ -39,7 +39,7 @@ def parse_args():
     )
     parser.add_argument(
         '--prompts-file',
-        default="data/judge_prompts_v3_noref_nocot_x96.json",
+        default="data/judge_prompts_v3_noref_nocot_noanchor_x96.json",
         help='JSON file containing the partial judge prompts to be filled with test responses'
     )
     parser.add_argument(

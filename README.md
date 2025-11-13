@@ -65,7 +65,7 @@ python judgemark_v2.py \
 
 - **`--judge-models`** (required): A comma-delimited list of model ids that will be assessed as an ensemble (e.g. `openai/gpt-4o,anthropic/claude-sonnet-4`). A single judge is fine, and multiple of the same judge can be stacked.
 - **`--samples-file`**: Path to the JSON with creative-writing samples to be judged. Default: `data/judgemark_v3_samples_3_iter.json`.
-- **`--prompts-file`**: Path to the JSON with partial prompts for the judge. Default: `data/judge_prompts_v3_noref_nocot_x96.json`.
+- **`--prompts-file`**: Path to the JSON with partial prompts for the judge. Default: `data/judge_prompts_v3_noref_nocot_noanchor_x96.json`.
 - **`--runs-file`**: The output JSON to store final run results. Default: `judgemark_v2_runs.json`.
 - **`--run-id`**: A custom run ID for continuing or naming a run (optional).
 - **`--threads`**: Number of threads for parallel scoring. Default: `6`.

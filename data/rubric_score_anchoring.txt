@@ -1,0 +1,11 @@
+0: Third Grade Level
+1: Seventh Grade Level
+2: Grade 12 Level
+3: Amateur Self-Published Author
+4: Emerging Hobbyist Writer
+5: Competent Semi-Professional Novelist
+6: Engaging Published Author
+7: Writing Competition Finalist
+8: Exceptional Writing Competition Winner
+9: Widely Respected Author
+10: A Masterwork

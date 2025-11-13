@@ -9,14 +9,43 @@ STABILITY_ITEMS = [
 STABILITY_REPS = 100
 
 # Reference scores for correlation
+REFERENCE_MODEL_SCORES = {
+    
+    #"kimi-k2": ?,
+    "o3": 1402,
+    "claude-opus-4": 1419,
+    "deepseek-r1": 1373,
+    "claude-sonnet-4": 1386,
+    "chatgpt-4o-latest": 1424,
+    "deepseek-chat-v3-0324": 1394,
+    "claude-3.5-sonnet": 1366,
+    "gemini-2.5-pro-preview": 1446,
+    "deepseek-r1-0528": 1392,
+    "gpt-4.1": 1404,
+    "claude-3.7-sonnet": 1377,
+    "qwen3-235b-a22b": 1325,
+    "gemma-3-27b-it": 1353,
+    "mistral-small-3.2-24b-instruct-2506": 1329,
+}
+
 
 REFERENCE_MODEL_SCORES = {
     
     "kimi-k2": 1387,
+    
     "claude-opus-4": 1417,
+    
     "claude-sonnet-4": 1380,
     "chatgpt-4o-latest": 1425,
+    
+    #"anthropic/claude-3.5-sonnet": 
+    #"google/gemini-2.5-pro-preview",
+    
     "gpt-4.1": 1399,
+    
+    
+    #"quasar-alpha",
+    
     "qwen3-235b-a22b": 1366,
     "gemma-3-27b-it": 1355,
     "mistral-small-3.2-24b": 1334,
@@ -25,6 +54,7 @@ REFERENCE_MODEL_SCORES = {
     "gpt-4.1-mini": 1349,
     "gemma-3-12b-it": 1333,
     "gemma-3-4b-it": 1282,
+    #"glm-4-32b": 
     "gpt-4.1-nano": 1309,
 }
 
@@ -74,4 +104,6 @@ MODEL_NAME_REPLACEMENTS = {
     "google/gemini-2.5-flash-lite": "gemini-2.5-flash-lite",
     "gpt-5-nano-2025-08-07,gpt-5-nano-2025-08-07,gpt-5-nano-2025-08-07,gpt-5-nano-2025-08-07,gpt-5-nano-2025-08-07": "gpt-5-nano-2025-08-07__5x-ensemble",
     "anthropic/claude-sonnet-4": "claude-sonnet-4",
+    "anthropic/claude-sonnet-4.5": "claude-sonnet-4.5",
+    "anthropic/claude-haiku-4.5": "claude-haiku-4.5",
 }
